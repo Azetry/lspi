@@ -1,0 +1,17 @@
+min_version = "2026.7.12"
+
+[settings]
+minimum_release_age = "24h"
+
+[settings.npm]
+package_manager = "npm"
+
+[tools]
+node = "24.18.0"
+go = "1.26.5"
+"npm:pyright" = "1.1.411"
+"npm:typescript-language-server" = "5.3.0"
+"npm:typescript" = "6.0.3"
+"go:golang.org/x/tools/gopls" = "0.23.0"
+"npm:intelephense" = "1.18.5"
+"aqua:rust-lang/rust-analyzer" = "2026-08-10"

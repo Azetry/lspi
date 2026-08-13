@@ -2,6 +2,11 @@
 
 Giving AI the sight of LSP.
 
+> This is the Space Force-maintained distribution of
+> [Latias94/lspi](https://github.com/Latias94/lspi). The original project and
+> authors are credited in [NOTICE](NOTICE). Space Force consumes releases from
+> this repository while retaining the upstream remote for security tracking.
+
 `lspi` is an **MCP server** that bridges **Language Server Protocol (LSP)** features (definition/references/rename/diagnostics, etc.)
 to **AI coding CLIs** (starting with Codex) over **stdio**.
 

@@ -47,3 +47,25 @@ jobs:
 
       - name: Build (release)
         run: cargo build --release --locked
+
+  semantic-canary:
+    name: semantic-canary (five languages)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pinned language servers
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          version: 2026.7.12
+          install: true
+          cache: true
+
+      - name: Build lspi
+        run: cargo build --locked
+
+      - name: Run cold semantic canary
+        run: mise exec -- python3 scripts/semantic_canary.py --lspi target/debug/lspi

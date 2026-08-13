@@ -455,6 +455,22 @@ impl OmniSharpClient {
         Ok(out)
     }
 
+    pub async fn workspace_symbols_for_file(
+        &self,
+        file_path: &Path,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<WorkspaceSymbolMatch>> {
+        let cold = self.prepare_file(file_path).await?;
+        let raw = self
+            .lsp
+            .workspace_symbols_with_cold_retry(query, cold)
+            .await?;
+        let mut out = parse_workspace_symbols(raw)?;
+        out.truncate(max_results.max(1));
+        Ok(out)
+    }
+
     fn parse_call_hierarchy_item_value(&self, value: &Value) -> Result<CallHierarchyItemResolved> {
         parse_call_hierarchy_item(value)
     }
@@ -705,12 +721,11 @@ impl OmniSharpClient {
         normalize_workspace_edit(raw)
     }
 
-    async fn prepare_file(&self, file_path: &Path) -> Result<()> {
-        self.open_or_sync(file_path, "csharp").await?;
-        Ok(())
+    async fn prepare_file(&self, file_path: &Path) -> Result<bool> {
+        self.open_or_sync(file_path, "csharp").await
     }
 
-    async fn open_or_sync(&self, file_path: &Path, language_id: &str) -> Result<()> {
+    async fn open_or_sync(&self, file_path: &Path, language_id: &str) -> Result<bool> {
         let abs = file_path
             .canonicalize()
             .with_context(|| format!("failed to canonicalize file path: {file_path:?}"))?;
@@ -721,7 +736,7 @@ impl OmniSharpClient {
         let text = String::from_utf8(content).context("file is not valid UTF-8")?;
 
         let mut open = self.open_files.lock().await;
-        match open.get_mut(&abs) {
+        let cold = match open.get_mut(&abs) {
             None => {
                 debug!("didOpen {:?}", abs);
                 self.lsp.did_open(&abs, language_id, 1, text).await?;
@@ -735,6 +750,7 @@ impl OmniSharpClient {
                 if !self.warmup_delay.is_zero() {
                     tokio::time::sleep(self.warmup_delay).await;
                 }
+                true
             }
             Some(state) => {
                 if state.last_sha256 != hash {
@@ -743,8 +759,9 @@ impl OmniSharpClient {
                     debug!("didChange {:?} version={}", abs, state.version);
                     self.lsp.did_change(&abs, state.version, text).await?;
                 }
+                false
             }
-        }
-        Ok(())
+        };
+        Ok(cold)
     }
 }
