@@ -112,21 +112,21 @@ impl LspiMcpServer {
         let (max_total_chars, max_total_chars_warning) =
             effective_max_total_chars(&self.state.config, args.max_total_chars);
 
-        let routed = if let Some(file_path) = args.file_path.as_deref() {
+        let (routed, routed_file) = if let Some(file_path) = args.file_path.as_deref() {
             let abs_file = canonicalize_within(
                 &self.state.workspace_root,
                 &self.state.allowed_roots,
                 Path::new(file_path),
             )
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            self.client_for_file(&abs_file).await?
+            (self.client_for_file(&abs_file).await?, Some(abs_file))
         } else if self.state.servers.len() == 1 {
             let server = self
                 .state
                 .servers
                 .first()
                 .ok_or_else(|| McpError::internal_error("no configured servers", None))?;
-            self.client_for_server(server).await?
+            (self.client_for_server(server).await?, None)
         } else {
             let servers = self
                 .state
@@ -172,10 +172,15 @@ impl LspiMcpServer {
 
         let server_id = routed.server_id().to_string();
 
-        let matches = routed
-            .workspace_symbols(&args.query, max_results)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let matches = match routed_file.as_deref() {
+            Some(file_path) => {
+                routed
+                    .workspace_symbols_for_file(file_path, &args.query, max_results)
+                    .await
+            }
+            None => routed.workspace_symbols(&args.query, max_results).await,
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let mut out = Vec::new();
         for m in matches {

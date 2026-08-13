@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 This project follows a lightweight variant of "Keep a Changelog". Versions use semantic versioning where practical.
 
+## [0.2.1-space-force.1] - 2026-08-13
+
+### Fixed
+
+- MCP: make file-aware workspace-symbol searches open the target file before
+  the first request and use a bounded cold-start retry for `No Project`, empty
+  initialization results, and language-server indexing delays.
+- Pyright: resolve `pyright-langserver` without invoking unsupported
+  `--version` or `--help` preflight commands.
+
+### Added
+
+- CI: exercise cold workspace-symbol discovery with the five Space Force
+  language servers: Python, TypeScript/JavaScript, Go, PHP, and Rust.
+- Release: publish a native Linux ARM64 binary in addition to the existing
+  macOS ARM64/x64, Linux x64, and Windows x64 artifacts.
+- Licensing: include MIT and Apache-2.0 license texts plus original-project
+  attribution and fork maintenance information.
+
+### Changed
+
+- Distribution: use `Azetry/lspi` as the canonical Space Force release source
+  while preserving attribution to `Latias94/lspi`.
+
 ## [0.2.0] - 2026-01-22
 
 ### Fixed

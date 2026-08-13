@@ -539,6 +539,45 @@ impl LspClient {
         self.send_request("workspace/symbol", &params, None).await
     }
 
+    pub async fn workspace_symbols_with_cold_retry(
+        &self,
+        query: &str,
+        cold: bool,
+    ) -> Result<Value> {
+        if !cold {
+            return self.workspace_symbols(query).await;
+        }
+
+        const MAX_ATTEMPTS: usize = 9;
+        let mut last_error: Option<anyhow::Error> = None;
+        let mut last_success: Option<Value> = None;
+        let mut delay_ms = 200u64;
+
+        for attempt in 0..MAX_ATTEMPTS {
+            match self.workspace_symbols(query).await {
+                Ok(value) => {
+                    let is_empty =
+                        value.is_null() || value.as_array().is_some_and(|items| items.is_empty());
+                    if !is_empty {
+                        return Ok(value);
+                    }
+                    last_success = Some(value);
+                }
+                Err(error) => last_error = Some(error),
+            }
+
+            if attempt + 1 < MAX_ATTEMPTS {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms = (delay_ms + 200).min(1_000);
+            }
+        }
+
+        if let Some(value) = last_success {
+            return Ok(value);
+        }
+        Err(last_error.unwrap_or_else(|| anyhow!("workspace symbol lookup failed during warmup")))
+    }
+
     pub async fn send_request<T: Serialize>(
         &self,
         method: &str,

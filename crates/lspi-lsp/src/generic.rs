@@ -422,6 +422,22 @@ impl GenericLspClient {
         Ok(out)
     }
 
+    pub async fn workspace_symbols_for_file(
+        &self,
+        file_path: &Path,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<WorkspaceSymbolMatch>> {
+        let cold = self.prepare_file(file_path).await?;
+        let raw = self
+            .lsp
+            .workspace_symbols_with_cold_retry(query, cold)
+            .await?;
+        let mut out = parse_workspace_symbols(raw)?;
+        out.truncate(max_results.max(1));
+        Ok(out)
+    }
+
     pub async fn get_diagnostics(
         &self,
         file_path: &Path,
@@ -483,12 +499,11 @@ impl GenericLspClient {
         normalize_workspace_edit(raw)
     }
 
-    async fn prepare_file(&self, file_path: &Path) -> Result<()> {
-        self.open_or_sync(file_path).await?;
-        Ok(())
+    async fn prepare_file(&self, file_path: &Path) -> Result<bool> {
+        self.open_or_sync(file_path).await
     }
 
-    async fn open_or_sync(&self, file_path: &Path) -> Result<()> {
+    async fn open_or_sync(&self, file_path: &Path) -> Result<bool> {
         let abs = file_path
             .canonicalize()
             .with_context(|| format!("failed to canonicalize file path: {file_path:?}"))?;
@@ -499,7 +514,7 @@ impl GenericLspClient {
         let text = String::from_utf8(content).context("file is not valid UTF-8")?;
 
         let mut open = self.open_files.lock().await;
-        match open.get_mut(&abs) {
+        let cold = match open.get_mut(&abs) {
             None => {
                 debug!("didOpen {:?}", abs);
                 self.lsp.did_open(&abs, &self.language_id, 1, text).await?;
@@ -513,6 +528,7 @@ impl GenericLspClient {
                 if !self.warmup_delay.is_zero() {
                     tokio::time::sleep(self.warmup_delay).await;
                 }
+                true
             }
             Some(state) => {
                 if state.last_sha256 != hash {
@@ -521,9 +537,10 @@ impl GenericLspClient {
                     debug!("didChange {:?} version={}", abs, state.version);
                     self.lsp.did_change(&abs, state.version, text).await?;
                 }
+                false
             }
-        }
-        Ok(())
+        };
+        Ok(cold)
     }
 
     async fn document_symbols_with_retry(&self, file_path: &Path) -> Result<Vec<FlatSymbol>> {
@@ -687,5 +704,106 @@ impl GenericLspClient {
             }
         }
         Err(last_err.unwrap_or_else(|| anyhow!("prepareCallHierarchy failed")))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod cold_workspace_symbol_tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use tempfile::tempdir;
+
+    use super::{GenericLspClient, GenericLspClientOptions};
+
+    #[tokio::test]
+    async fn opens_before_workspace_symbols_and_only_retries_the_cold_file() {
+        let root = tempdir().unwrap();
+        let file_path = root.path().join("sample.ts");
+        std::fs::write(&file_path, "export const TargetSymbol = 1;\n").unwrap();
+        let trace_path = root.path().join("trace.log");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_workspace_lsp.py");
+
+        let client = GenericLspClient::start(GenericLspClientOptions {
+            command: "python3".to_string(),
+            args: vec![fixture.to_string_lossy().to_string()],
+            root_dir: root.path().to_path_buf(),
+            process_cwd: root.path().to_path_buf(),
+            env: HashMap::from([(
+                "LSPI_TEST_TRACE".to_string(),
+                trace_path.to_string_lossy().to_string(),
+            )]),
+            workspace_folders: Vec::new(),
+            adapter: crate::adapter::LspAdapter::default(),
+            initialize_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(2),
+            request_timeout_overrides: HashMap::new(),
+            language_id: "typescript".to_string(),
+            warmup_delay: Duration::ZERO,
+            workspace_configuration: HashMap::new(),
+            initialize_options: None,
+            client_capabilities: None,
+        })
+        .await
+        .unwrap();
+
+        let matches = client
+            .workspace_symbols_for_file(&file_path, "TargetSymbol", 10)
+            .await
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+
+        let before_warm_query = std::fs::read_to_string(&trace_path).unwrap();
+        let methods: Vec<_> = before_warm_query.lines().collect();
+        let did_open = methods
+            .iter()
+            .position(|method| *method == "textDocument/didOpen")
+            .unwrap();
+        let first_workspace = methods
+            .iter()
+            .position(|method| *method == "workspace/symbol")
+            .unwrap();
+        assert!(did_open < first_workspace);
+        assert_eq!(
+            methods
+                .iter()
+                .filter(|method| **method == "workspace/symbol")
+                .count(),
+            3
+        );
+
+        let missing = client
+            .workspace_symbols_for_file(&file_path, "MissingSymbol", 10)
+            .await
+            .unwrap();
+        assert!(missing.is_empty());
+        let after_warm_query = std::fs::read_to_string(&trace_path).unwrap();
+        assert_eq!(
+            after_warm_query
+                .lines()
+                .filter(|method| *method == "workspace/symbol")
+                .count(),
+            4
+        );
+
+        let second_file = root.path().join("second.ts");
+        std::fs::write(&second_file, "export const OtherSymbol = 1;\n").unwrap();
+        let error = client
+            .workspace_symbols_for_file(&second_file, "AlwaysError", 10)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("still indexing"));
+        let after_cold_error = std::fs::read_to_string(&trace_path).unwrap();
+        assert_eq!(
+            after_cold_error
+                .lines()
+                .filter(|method| *method == "workspace/symbol")
+                .count(),
+            13
+        );
+
+        client.shutdown().await.unwrap();
     }
 }

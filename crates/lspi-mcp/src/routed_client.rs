@@ -62,6 +62,31 @@ impl RoutedClient {
         }
     }
 
+    pub(crate) async fn workspace_symbols_for_file(
+        &self,
+        file_path: &Path,
+        query: &str,
+        max_results: usize,
+    ) -> anyhow::Result<Vec<lspi_lsp::WorkspaceSymbolMatch>> {
+        match self {
+            RoutedClient::Rust { client, .. } => {
+                client
+                    .workspace_symbols_for_file(file_path, query, max_results)
+                    .await
+            }
+            RoutedClient::OmniSharp { client, .. } => {
+                client
+                    .workspace_symbols_for_file(file_path, query, max_results)
+                    .await
+            }
+            RoutedClient::Generic { client, .. } => {
+                client
+                    .workspace_symbols_for_file(file_path, query, max_results)
+                    .await
+            }
+        }
+    }
+
     pub(crate) async fn find_definition_by_name(
         &self,
         file_path: &Path,
